@@ -226,3 +226,5 @@ dist
 # AI
 PLAN.md
 tmp/
+# git worktrees (see CLAUDE.md)
+worktrees/
