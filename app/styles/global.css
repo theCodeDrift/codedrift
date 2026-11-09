@@ -109,3 +109,13 @@ html {
     scroll-behavior: smooth;
   }
 }
+
+/* Balance heading lines so a headline never ends on one word by itself. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  text-wrap: balance;
+}
