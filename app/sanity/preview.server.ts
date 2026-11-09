@@ -1,11 +1,10 @@
 import { createClient, type SanityClient } from "@sanity/client";
 import {
-  SECRET_TTL,
-  schemaType,
-  urlSearchParamPreviewSecret,
-} from "@sanity/preview-url-secret/constants";
-
-import { previewSource } from "./preview-source";
+  PREVIEW_SEARCH_PARAM,
+  PREVIEW_TICKET_TTL,
+  PREVIEW_TICKET_TYPE,
+  previewSource,
+} from "./preview-source";
 
 // The `drafts` perspective name needs 2025-02-19 or later. Pinned here rather
 // than in SANITY_API_VERSION so published reads are untouched.
@@ -30,13 +29,12 @@ export function getSanityPreviewClient({ env }: PreviewOptions): SanityClient {
   });
 }
 
-// `createPreviewSecret` encodes 16 random bytes as hex, then base64url without
-// padding: always 43 characters. Anything else is rejected before it can cost
+// Studio encodes 32 random bytes as base64url without padding: always 43
+// characters. Anything else is rejected before it can cost
 // a Sanity request.
 const SECRET_SHAPE = /^[\w-]{43}$/;
 
-// The library's own `validatePreviewUrl` checks the secret and its age but not
-// what it was minted for, so this query adds the `source` match.
+// A ticket opens only the path it was minted for, and only for 48 hours.
 const SCOPED_SECRET_QUERY = `count(*[
   _type == $type &&
   secret == $secret &&
@@ -55,17 +53,17 @@ export async function resolvePreview({
   request,
 }: PreviewOptions & { request: Request }): Promise<boolean> {
   const url = new URL(request.url);
-  const secret = url.searchParams.get(urlSearchParamPreviewSecret);
+  const secret = url.searchParams.get(PREVIEW_SEARCH_PARAM);
   if (!secret || !SECRET_SHAPE.test(secret)) return false;
 
   try {
     return await getSanityPreviewClient({ env })
       .withConfig({ perspective: "raw" })
       .fetch<boolean>(SCOPED_SECRET_QUERY, {
-        type: schemaType,
+        type: PREVIEW_TICKET_TYPE,
         secret,
         source: previewSource(url.pathname),
-        ttl: SECRET_TTL,
+        ttl: PREVIEW_TICKET_TTL,
       });
   } catch (error) {
     console.error("Preview ticket validation failed", error);
