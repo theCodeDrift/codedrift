@@ -9,6 +9,10 @@ import Content from "~/components/content";
 import { PortableText, type ImageConfig } from "~/components/portable-text";
 import { cloudflareEnvironmentContext } from "~/context";
 import { getSanityClient } from "~/sanity/client";
+import {
+  getSanityPreviewClient,
+  resolvePreview,
+} from "~/sanity/preview.server";
 import { POST_BY_SLUG_QUERY } from "~/sanity/queries";
 import { buildSignedOgImageUrl } from "~/og";
 import { SITE, absoluteUrl, pageMeta } from "~/seo";
@@ -24,7 +28,8 @@ interface PostEntry {
   _updatedAt?: string;
   title: string;
   slug: { current: string };
-  publishedAt: string;
+  /** Unset on a draft that has never been published; only reachable in preview. */
+  publishedAt?: string;
   /** Author-set revision date; drives the visible "Updated" line. */
   updatedAt?: string;
   excerpt?: string;
@@ -35,7 +40,7 @@ interface PostEntry {
 
 export function meta({ data: loaderData }: Route.MetaArgs) {
   if (!loaderData) return [{ title: "Not Found — The CodeDrift" }];
-  const { post, imageConfig, ogCard } = loaderData;
+  const { post, imageConfig, ogCard, preview } = loaderData;
   const path = `/blog/${post.slug.current}`;
   const description =
     post.excerpt ?? `${post.title} — long-form writing by ${SITE.author}.`;
@@ -65,7 +70,7 @@ export function meta({ data: loaderData }: Route.MetaArgs) {
     ...(ogImage ? { image: [ogImage] } : {}),
   };
 
-  return [
+  const tags = [
     ...pageMeta({
       title: `${post.title} — The CodeDrift`,
       description,
@@ -73,20 +78,42 @@ export function meta({ data: loaderData }: Route.MetaArgs) {
       image: ogImage,
       type: "article",
     }),
-    { "script:ld+json": blogPosting },
   ];
+  // A preview is noindex and an unpublished post has no true publish date,
+  // so the BlogPosting entity is left out.
+  if (preview || !post.publishedAt) {
+    return [...tags, { name: "robots", content: "noindex, nofollow" }];
+  }
+  return [...tags, { "script:ld+json": blogPosting }];
 }
 
-export async function loader({ context, params }: Route.LoaderArgs) {
+const PREVIEW_HEADERS = {
+  "X-Robots-Tag": "noindex, nofollow",
+  "Cache-Control": "private, no-store",
+  "Referrer-Policy": "no-referrer",
+};
+
+export function headers({ loaderHeaders, errorHeaders }: Route.HeadersArgs) {
+  // A thrown 404 under a valid ticket still has the ticket in its URL.
+  return errorHeaders ?? loaderHeaders;
+}
+
+export async function loader({ context, params, request }: Route.LoaderArgs) {
   const env = context.get(cloudflareEnvironmentContext);
-  const client = getSanityClient({ env });
+  const preview = await resolvePreview({ env, request });
+  const client = preview
+    ? getSanityPreviewClient({ env })
+    : getSanityClient({ env });
   const post = await client.fetch<PostEntry | null>(POST_BY_SLUG_QUERY, {
     slug: params.slug,
   });
 
   if (!post) {
     // eslint-disable-next-line @typescript-eslint/only-throw-error -- React Router idiom: throwing a `data()` response surfaces as a 404 to the framework.
-    throw data(undefined, { status: 404 });
+    throw data(undefined, {
+      status: 404,
+      headers: preview ? PREVIEW_HEADERS : undefined,
+    });
   }
 
   const imageConfig: ImageConfig = {
@@ -106,7 +133,10 @@ export async function loader({ context, params }: Route.LoaderArgs) {
       error,
     );
   }
-  return { post, imageConfig, ogCard };
+  return data(
+    { post, imageConfig, ogCard, preview },
+    preview ? { headers: PREVIEW_HEADERS } : undefined,
+  );
 }
 
 export default function BlogPost() {
@@ -124,16 +154,22 @@ export default function BlogPost() {
     <div className="w-full flex-shrink-0 flex-col lg:w-auto">
       <div className="max-w-reading mx-2 lg:mx-0">
         <header className="mb-6">
-          <time
-            dateTime={post.publishedAt}
-            className="font-mono text-sm text-gray-500 dark:text-gray-400"
-          >
-            {new Date(post.publishedAt).toLocaleDateString("en-US", {
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-            })}
-          </time>
+          {post.publishedAt ? (
+            <time
+              dateTime={post.publishedAt}
+              className="font-mono text-sm text-gray-500 dark:text-gray-400"
+            >
+              {new Date(post.publishedAt).toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+              })}
+            </time>
+          ) : (
+            <span className="font-mono text-sm text-gray-500 dark:text-gray-400">
+              Draft preview
+            </span>
+          )}
           {updatedAt ? (
             <time
               dateTime={updatedAt}
