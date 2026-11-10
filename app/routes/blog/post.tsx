@@ -166,7 +166,7 @@ export default function BlogPost() {
               })}
             </time>
           ) : (
-            <span className="font-mono text-sm text-gray-500 dark:text-gray-400">
+            <span className="text-secondary-500 font-mono text-sm font-bold">
               Draft preview
             </span>
           )}
